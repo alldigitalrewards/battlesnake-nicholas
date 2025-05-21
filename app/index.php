@@ -13,7 +13,7 @@ $app->addBodyParsingMiddleware();
 $app->get('/', function (Request $request, Response $response) {
     $data = [
         'apiversion' => '1',
-        'author' => 'your-name',
+        'author' => 'DoctorPoop',
         'color' => '#573527',
         'head' => 'default',
         'tail' => 'default'
