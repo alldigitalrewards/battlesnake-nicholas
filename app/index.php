@@ -13,8 +13,8 @@ $app->addBodyParsingMiddleware();
 $app->get('/', function (Request $request, Response $response) {
     $data = [
         'apiversion' => '1',
-        'author' => 'DoctorPoop',
-        'color' => '#573527',
+        'author' => 'your-name',
+        'color' => '#00FF00',
         'head' => 'default',
         'tail' => 'default'
     ];
@@ -88,13 +88,69 @@ $app->post('/move', function (Request $request, Response $response) {
 
     $length = count($you['body']);
     $aggressive = $health > 40 && $length >= 8;
+    $desperate = $health <= 25;
 
     $best = null;
+    usort($safeMoves, function($a, $b) use ($food, $head) {
+        $aDist = PHP_INT_MAX;
+        $bDist = PHP_INT_MAX;
+        foreach ($food as $f) {
+            $aDist = min($aDist, abs($f['x'] - $a['position']['x']) + abs($f['y'] - $a['position']['y']));
+            $bDist = min($bDist, abs($f['x'] - $b['position']['x']) + abs($f['y'] - $b['position']['y']));
+        }
+        return $aDist <=> $bDist;
+    });
+
     foreach ($safeMoves as &$option) {
         $position = $option['position'];
         $option['score'] = 0;
 
+        if ($desperate) {
+            foreach ($board['snakes'] as $snake) {
+                if ($snake['id'] === $you['id']) continue;
+                $enemyHead = $snake['body'][0];
+                $dist = abs($position['x'] - $enemyHead['x']) + abs($position['y'] - $enemyHead['y']);
+                if ($dist === 1) {
+                    $option['score'] += 999; // suicidal headbutt bonus
+                }
+            }
+        }
+
         $space = floodFill($position, $board, $you);
+
+        // Lookahead: simulate 2nd step from this position in all directions
+        $lookaheadSpace = 0;
+        foreach ([
+                     ['x' => $position['x'] + 1, 'y' => $position['y']],
+                     ['x' => $position['x'] - 1, 'y' => $position['y']],
+                     ['x' => $position['x'],     'y' => $position['y'] + 1],
+                     ['x' => $position['x'],     'y' => $position['y'] - 1]
+                 ] as $nextStep) {
+            $nextFlood = floodFill($nextStep, $board, $you);
+            $lookaheadSpace = max($lookaheadSpace, $nextFlood);
+        }
+
+        if ($lookaheadSpace < 4) {
+            $option['score'] -= 10;
+        } else {
+            $option['score'] += intval($lookaheadSpace / 2);
+
+            $edgeBuffer = 2;
+            if (
+                $position['x'] <= $edgeBuffer || $position['x'] >= $width - 1 - $edgeBuffer ||
+                $position['y'] <= $edgeBuffer || $position['y'] >= $height - 1 - $edgeBuffer
+            ) {
+                $option['score'] -= 10;
+            }
+
+            $centerX = intdiv($width, 2);
+            $centerY = intdiv($height, 2);
+            $distFromCenter = abs($position['x'] - $centerX) + abs($position['y'] - $centerY);
+            if ($length >= 9) {
+                $option['score'] -= $distFromCenter;
+            }
+        }
+
         if ($space < 3) continue;
         $option['score'] += $space;
 
@@ -119,29 +175,6 @@ $app->post('/move', function (Request $request, Response $response) {
 
             $dist = abs($position['x'] - $enemyHead['x']) + abs($position['y'] - $enemyHead['y']);
             $option['score'] += max(0, 12 - $dist) * 4;
-
-            $adjacent = [
-                ['x' => $enemyHead['x'] + 1, 'y' => $enemyHead['y']],
-                ['x' => $enemyHead['x'] - 1, 'y' => $enemyHead['y']],
-                ['x' => $enemyHead['x'],     'y' => $enemyHead['y'] + 1],
-                ['x' => $enemyHead['x'],     'y' => $enemyHead['y'] - 1]
-            ];
-
-            foreach ($adjacent as $adj) {
-                if ($adj['x'] === $position['x'] && $adj['y'] === $position['y']) {
-                    $option['score'] += 10;
-                }
-                foreach ([
-                             ['x' => $adj['x'] + 1, 'y' => $adj['y']],
-                             ['x' => $adj['x'] - 1, 'y' => $adj['y']],
-                             ['x' => $adj['x'],     'y' => $adj['y'] + 1],
-                             ['x' => $adj['x'],     'y' => $adj['y'] - 1],
-                         ] as $future) {
-                    if ($future['x'] === $position['x'] && $future['y'] === $position['y']) {
-                        $option['score'] += 5;
-                    }
-                }
-            }
         }
 
         $tail = end($you['body']);
@@ -151,6 +184,10 @@ $app->post('/move', function (Request $request, Response $response) {
         }
 
         if (!empty($food)) {
+            if ($length < 9) {
+                $option['score'] += 150;
+            }
+
             $closestFood = null;
             $shortestDistance = PHP_INT_MAX;
             foreach ($food as $f) {
@@ -160,11 +197,20 @@ $app->post('/move', function (Request $request, Response $response) {
                     $closestFood = $f;
                 }
             }
-            $dx = abs($position['x'] - $closestFood['x']);
-            $dy = abs($position['y'] - $closestFood['y']);
-            $dist = $dx + $dy;
-            $option['score'] -= $dist * 2;
-            if ($length < 8 || $health < 40) {
+
+            if ($closestFood !== null) {
+                $dx = abs($position['x'] - $closestFood['x']);
+                $dy = abs($position['y'] - $closestFood['y']);
+                $dist = $dx + $dy;
+                $option['score'] -= $dist;
+                if ($dist === 0) {
+                    $option['score'] += 100;
+                } else {
+                    $option['score'] += max(0, 20 - $dist);
+                }
+            }
+
+            if ($length < 9 || $health < 40) {
                 $option['score'] -= 20;
             }
         }
